@@ -1,0 +1,154 @@
+import os
+import json
+import logging
+import re
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import LabelEncoder
+
+# Setup Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Target Directory Configuration
+BASE_DIR = os.getenv("BELKHTEF_DATA_DIR", "/opt/airflow/data")
+# Adjust for local if not set
+if not os.getenv("BELKHTEF_DATA_DIR"):
+    BASE_DIR = os.path.join(os.getcwd(), "data")
+
+SILVER_DIR = os.path.join(BASE_DIR, "silver")
+GOLD_DIR = os.path.join(BASE_DIR, "gold")
+
+# Project Root for Website
+PROJECT_ROOT = os.getcwd() 
+
+def extract_brand(title):
+    if not title:
+        return "Unknown"
+    # Simple extraction: First word is often the brand. 
+    # Cleaning up non-alphabetic chars for better grouping
+    first_word = title.strip().split(' ')[0].upper()
+    return re.sub(r'[^A-Z]', '', first_word)
+
+def run_gold_ai():
+    """
+    Reads Silver data, runs ML Price Prediction, saves Gold Parquet, and generates website JSON.
+    """
+    silver_path = os.path.join(SILVER_DIR, "vehicles.parquet")
+    
+    # Fallback to checking local silver if env var path failed
+    if not os.path.exists(silver_path):
+        silver_path = "data/silver/vehicles.parquet"
+    
+    if not os.path.exists(silver_path):
+        # Try to run silver creation if missing? Or just fail.
+        # Let's try to transform standard json if parquet missing
+        if os.path.exists("vehicles.json"):
+            logging.info("Parquet not found, generating from vehicles.json...")
+            with open("vehicles.json", "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            from clean_transform import process_dataframe
+            processed = process_dataframe(raw)
+            df = pd.DataFrame(processed)
+        else:
+            raise Exception(f"Silver data not found at {silver_path} and no vehicles.json found.")
+    else:
+        df = pd.read_parquet(silver_path)
+    
+    # --- Feature Engineering ---
+    df['brand'] = df['title'].apply(extract_brand)
+    
+    # Ensure numeric types
+    df['year'] = pd.to_numeric(df['year'], errors='coerce')
+    df['price_tnd'] = pd.to_numeric(df['price_tnd'], errors='coerce')
+
+    # --- ML Training (Random Forest) ---
+    # Train on valid data: Real price, valid year
+    training_mask = (df['price_tnd'] > 1000) & \
+                    (df['price_tnd'] < 500000) & \
+                    (df['year'] >= 1990) & \
+                    (df['brand'] != "UNKNOWN")
+                    
+    train_df = df[training_mask].copy()
+    
+    df['ai_fair_price'] = None
+    df['deal_score'] = None
+    df['is_good_deal'] = False
+    
+    # Lower threshold for demo/tuning
+    if len(train_df) > 5: 
+        logging.info(f"Training ML Model on {len(train_df)} records...")
+        
+        # Encode Brand
+        le = LabelEncoder()
+        # Fit on all brands to be safe
+        all_brands = df['brand'].astype(str).unique()
+        le.fit(all_brands)
+        
+        # Prepare X and y
+        X_train = train_df[['year']].values
+        brand_encoded = le.transform(train_df['brand'].astype(str))
+        X_train = np.column_stack((X_train, brand_encoded))
+        
+        y_train = train_df['price_tnd'].values
+        
+        # --- Hyperparameter Tuning with GridSearch ---
+        param_grid = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [None, 10, 20],
+            'min_samples_split': [2, 5]
+        }
+        
+        rf = RandomForestRegressor(random_state=42)
+        
+        # GridSearch (CV=2 for small dataset check)
+        grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, 
+                                   cv=2, n_jobs=1, scoring='neg_mean_absolute_error')
+        
+        logging.info("Starting GridSearchCV...")
+        grid_search.fit(X_train, y_train)
+        
+        best_model = grid_search.best_estimator_
+        logging.info(f"Best Parameters Found: {grid_search.best_params_}")
+        
+        # --- Prediction ---
+        # Predict for items with valid year
+        predict_mask = (df['year'] >= 1980)
+        
+        if predict_mask.any():
+            X_pred_base = df.loc[predict_mask, ['year']].values
+            brand_encoded_pred = le.transform(df.loc[predict_mask, 'brand'].astype(str))
+            X_predict = np.column_stack((X_pred_base, brand_encoded_pred))
+            
+            predicted_prices = best_model.predict(X_predict)
+            df.loc[predict_mask, 'ai_fair_price'] = predicted_prices
+            
+            # --- Deal Scoring ---
+            # Only score if we have a real price to compare against
+            score_mask = predict_mask & (df['price_tnd'] > 1000)
+            
+            # Deal Score = (Fair - Actual) / Fair
+            # Positive score means Actual is Lower than Fair (Good Deal)
+            df.loc[score_mask, 'deal_score'] = (
+                (df.loc[score_mask, 'ai_fair_price'] - df.loc[score_mask, 'price_tnd']) / 
+                df.loc[score_mask, 'ai_fair_price']
+            )
+            
+            # Threshold: > 15% discount
+            df.loc[score_mask, 'is_good_deal'] = df.loc[score_mask, 'deal_score'] > 0.15
+    
+    else:
+        logging.warning("Not enough data to train ML model with GridSearch (need > 5 samples). Skipping AI prediction.")
+
+    df['published_at'] = datetime.now().isoformat()
+    
+    # Save Gold JSON for Website (Root)
+    website_json_path = os.path.join(PROJECT_ROOT, "vehicles_gold.json")
+    df.to_json(website_json_path, orient='records', force_ascii=False, indent=4)
+        
+    logging.info(f"Published {len(df)} records (Good Deals: {df['is_good_deal'].sum()}) to {website_json_path}")
+
+if __name__ == "__main__":
+    run_gold_ai()

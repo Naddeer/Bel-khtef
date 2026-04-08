@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BelKhtef | Premium Car Marketplace</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <header>
+        <nav>
+            <div class="logo">Bel<span>Khtef</span></div>
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="Search for your dream car...">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+            </div>
+            <div class="nav-actions">
+                <button class="btn-primary">Post Ad</button>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <h1>Find Your Next <span>Perfect Ride</span></h1>
+            <p>Explore the best vehicle deals from Tayara.tn with our premium browser interface.</p>
+        </section>
+
+        <section class="filters">
+            <button class="filter-btn active" data-filter="all">All Vehicles</button>
+            <button class="filter-btn" data-filter="2023">Latest (2023)</button>
+            <button class="filter-btn" data-filter="2019">Modern (2019+)</button>
+            <button class="filter-btn" data-filter="luxury">Luxury</button>
+            <button class="filter-btn" data-filter="good_deals">🔥 Good Deals</button>
+        </section>
+
+        <section id="vehicleGrid" class="vehicle-grid">
+            <!-- Vehicles will be injected here -->
+            <div class="loader"></div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 BelKhtef. Data scraped from Tayara.tn</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
